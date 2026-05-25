@@ -86,25 +86,25 @@ function buildLeagueEmbed(league) {
   const spots = league.maxPlayers - league.players.length;
   const statusColor =
     league.status === 'cancelled' ? 0x7f8c8d :
-    league.status === 'full' ? 0xe74c3c :
+    league.status === 'full'      ? 0xe74c3c :
     0x1a1a2e;
 
   return new EmbedBuilder()
     .setTitle(
       league.status === 'cancelled' ? 'League Cancelled' :
-      league.status === 'full' ? 'League Full' :
+      league.status === 'full'      ? 'League Full'      :
       'League Open'
     )
     .setColor(statusColor)
     .addFields(
-      { name: 'Format',          value: league.format,                             inline: true },
-      { name: 'Match Type',      value: league.type,                               inline: true },
-      { name: 'Perks',           value: league.perks,                              inline: true },
-      { name: 'Region',          value: league.region,                             inline: true },
-      { name: 'Host',            value: `<@${league.hostId}>`,                     inline: true },
+      { name: 'Format',          value: league.format,                                    inline: true },
+      { name: 'Match Type',      value: league.type,                                      inline: true },
+      { name: 'Perks',           value: league.perks,                                     inline: true },
+      { name: 'Region',          value: league.region,                                    inline: true },
+      { name: 'Host',            value: `<@${league.hostId}>`,                            inline: true },
       { name: 'Players',         value: `${league.players.length} / ${league.maxPlayers}`, inline: true },
-      { name: 'Spots Remaining', value: `${spots}`,                                inline: true },
-      { name: 'League ID',       value: `\`${league.id}\``,                        inline: true },
+      { name: 'Spots Remaining', value: `${spots}`,                                       inline: true },
+      { name: 'League ID',       value: `\`${league.id}\``,                               inline: true },
     )
     .setFooter({ text: `To cancel: /cancel-league ${league.id}` })
     .setTimestamp();
