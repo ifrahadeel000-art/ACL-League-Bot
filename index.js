@@ -16,7 +16,7 @@ const {
 
 const fs = require('fs');
 
-const TOKEN = process.env.DISCORD_TOKEN;
+const TOKEN     = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
 
 if (!TOKEN || !CLIENT_ID) {
@@ -24,14 +24,16 @@ if (!TOKEN || !CLIENT_ID) {
   process.exit(1);
 }
 
-const DB_PATH = './database.json';
-const LEAGUE_CHANNEL_ID = '1501829215291703378';
-const LEAGUES_PING_ROLE_ID = '1504161847102804069';
-const LEAGUE_HOST_ROLE_ID = '1504161875644907714';
+const DB_PATH            = './database.json';
+const LEAGUE_CHANNEL_ID  = '1501829215291703378';
+const LEAGUES_PING_ROLE  = '1501829213928554565';
+const LEAGUE_HOST_ROLE   = '1501829213966176269';
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
 
 function readDB() {
   if (!fs.existsSync(DB_PATH)) {
-    const init = { leagues: {}, nextId: 1 };
+    const init = { leagues: {} };
     fs.writeFileSync(DB_PATH, JSON.stringify(init, null, 2));
     return init;
   }
@@ -42,11 +44,21 @@ function writeDB(data) {
   fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2));
 }
 
+function generateId() {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  let id = '';
+  for (let i = 0; i < 6; i++) id += chars[Math.floor(Math.random() * chars.length)];
+  return id;
+}
+
 function maxPlayers(format) {
   return { '2v2': 4, '3v3': 6, '4v4': 8 }[format];
 }
 
+// Pending host sessions keyed by userId
 const pendingSessions = {};
+
+// ── Discord Client ────────────────────────────────────────────────────────────
 
 const client = new Client({
   intents: [
@@ -56,58 +68,68 @@ const client = new Client({
   ],
 });
 
+// ── Register Slash Commands ───────────────────────────────────────────────────
+
 client.once('ready', async () => {
   console.log(`Online: ${client.user.tag}`);
 
-  const commands = [
-    new SlashCommandBuilder()
-      .setName('host-league')
-      .setDescription('Host a new league (League Host role required)'),
-    new SlashCommandBuilder()
-      .setName('join-league')
-      .setDescription('Join an active league')
-      .addStringOption(o =>
-        o.setName('id').setDescription('League ID').setRequired(true)
-      ),
-    new SlashCommandBuilder()
-      .setName('cancel-league')
-      .setDescription('Cancel an active league (League Host role required)')
-      .addStringOption(o =>
-        o.setName('id').setDescription('League ID').setRequired(true)
-      ),
-  ].map(c => c.toJSON());
+  const league = new SlashCommandBuilder()
+    .setName('league')
+    .setDescription('League management')
+    .addSubcommand(sub =>
+      sub.setName('host').setDescription('Host a new league (League Host role required)')
+    )
+    .addSubcommand(sub =>
+      sub
+        .setName('join')
+        .setDescription('Join an active league')
+        .addStringOption(o => o.setName('id').setDescription('League ID').setRequired(true))
+    )
+    .addSubcommand(sub =>
+      sub
+        .setName('cancel')
+        .setDescription('Cancel a league (League Host role required)')
+        .addStringOption(o => o.setName('id').setDescription('League ID').setRequired(true))
+    );
 
   const rest = new REST({ version: '10' }).setToken(TOKEN);
-  await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
+  await rest.put(Routes.applicationCommands(CLIENT_ID), { body: [league.toJSON()] });
   console.log('Slash commands registered.');
 });
 
+// ── Embed Builder ─────────────────────────────────────────────────────────────
+
 function buildLeagueEmbed(league) {
-  const spots = league.maxPlayers - league.players.length;
-  const statusColor =
+  const spots    = league.maxPlayers - league.players.length;
+  const playerMentions = league.players.map(id => `<@${id}>`).join('\n') || 'None';
+
+  const color =
     league.status === 'cancelled' ? 0x7f8c8d :
     league.status === 'full'      ? 0xe74c3c :
-    0x1a1a2e;
+    0x5865F2;
 
-  return new EmbedBuilder()
-    .setTitle(
-      league.status === 'cancelled' ? 'League Cancelled' :
-      league.status === 'full'      ? 'League Full'      :
-      'League Open'
-    )
-    .setColor(statusColor)
+  const title =
+    league.status === 'cancelled' ? 'League Cancelled' :
+    league.status === 'full'      ? 'League Full'      :
+    'League Available';
+
+  const embed = new EmbedBuilder()
+    .setTitle(title)
+    .setColor(color)
     .addFields(
-      { name: 'Format',          value: league.format,                                    inline: true },
-      { name: 'Match Type',      value: league.type,                                      inline: true },
-      { name: 'Perks',           value: league.perks,                                     inline: true },
-      { name: 'Region',          value: league.region,                                    inline: true },
-      { name: 'Host',            value: `<@${league.hostId}>`,                            inline: true },
-      { name: 'Players',         value: `${league.players.length} / ${league.maxPlayers}`, inline: true },
-      { name: 'Spots Remaining', value: `${spots}`,                                       inline: true },
-      { name: 'League ID',       value: `\`${league.id}\``,                               inline: true },
+      { name: 'Format',     value: league.format,         inline: true },
+      { name: 'Match Type', value: league.type,           inline: true },
+      { name: 'Perks',      value: league.perks,          inline: true },
+      { name: 'Region',     value: league.region,         inline: true },
+      { name: 'Host',       value: `<@${league.hostId}>`, inline: true },
+      { name: 'Spots Left', value: `${league.players.length} / ${league.maxPlayers}`, inline: true },
+      { name: 'Players',    value: playerMentions,        inline: false },
+      { name: 'League ID',  value: `${league.id}`,        inline: false },
     )
-    .setFooter({ text: `To cancel: /cancel-league ${league.id}` })
+    .setFooter({ text: `Cancel: /league cancel id:${league.id}` })
     .setTimestamp();
+
+  return embed;
 }
 
 function buildJoinButton(leagueId) {
@@ -119,25 +141,20 @@ function buildJoinButton(leagueId) {
   );
 }
 
-async function handleJoinLeague(interaction, leagueId) {
-  const db = readDB();
+// ── Join League ───────────────────────────────────────────────────────────────
+
+async function handleJoin(interaction, leagueId) {
+  const db     = readDB();
   const league = db.leagues[leagueId];
 
-  if (!league) {
-    return interaction.reply({ content: `No league found with ID \`${leagueId}\`.`, ephemeral: true });
-  }
-  if (league.status === 'cancelled') {
-    return interaction.reply({ content: `League \`${leagueId}\` has been cancelled.`, ephemeral: true });
-  }
-  if (league.status === 'full') {
-    return interaction.reply({ content: `League \`${leagueId}\` is full.`, ephemeral: true });
-  }
-  if (league.players.includes(interaction.user.id)) {
-    return interaction.reply({ content: 'You are already registered in this league.', ephemeral: true });
-  }
+  if (!league)                               return interaction.reply({ content: `No league found with ID **${leagueId}**.`,       ephemeral: true });
+  if (league.status === 'cancelled')         return interaction.reply({ content: `League **${leagueId}** has been cancelled.`,     ephemeral: true });
+  if (league.status === 'full')              return interaction.reply({ content: `League **${leagueId}** is full.`,                ephemeral: true });
+  if (league.players.includes(interaction.user.id)) return interaction.reply({ content: 'You are already in this league.', ephemeral: true });
 
   league.players.push(interaction.user.id);
 
+  // Add to private thread
   try {
     const thread = await client.channels.fetch(league.threadId);
     if (thread) {
@@ -145,30 +162,24 @@ async function handleJoinLeague(interaction, leagueId) {
       await thread.send(`<@${interaction.user.id}> has joined the league.`);
     }
   } catch (e) {
-    console.error('Thread member add error:', e);
+    console.error('Thread add error:', e);
   }
 
+  // Check if full
+  if (league.players.length >= league.maxPlayers) {
+    league.status = 'full';
+  }
+
+  // Update embed
   try {
-    const leagueChannel = await client.channels.fetch(LEAGUE_CHANNEL_ID);
-    const msg = await leagueChannel.messages.fetch(league.messageId);
-
-    if (league.players.length >= league.maxPlayers) {
-      league.status = 'full';
-    }
-
-    const embed = buildLeagueEmbed(league);
+    const ch  = await client.channels.fetch(LEAGUE_CHANNEL_ID);
+    const msg = await ch.messages.fetch(league.messageId);
     const components = league.status === 'full' ? [] : [buildJoinButton(leagueId)];
-    await msg.edit({ embeds: [embed], components });
+    await msg.edit({ embeds: [buildLeagueEmbed(league)], components });
 
     if (league.status === 'full') {
-      try {
-        const thread = await client.channels.fetch(league.threadId);
-        if (thread) {
-          await thread.send('All spots are filled. The league is now starting. Good luck to all participants.');
-        }
-      } catch (e) {
-        console.error('Thread full notification error:', e);
-      }
+      const thread = await client.channels.fetch(league.threadId).catch(() => null);
+      if (thread) await thread.send('All spots are filled. The league is now starting. Good luck to all participants.');
     }
   } catch (e) {
     console.error('Embed update error:', e);
@@ -177,78 +188,79 @@ async function handleJoinLeague(interaction, leagueId) {
   writeDB(db);
 
   await interaction.reply({
-    content: `You have joined League \`${leagueId}\`. A private thread has been opened for league participants.`,
+    content: `You have joined league **${leagueId}**. Check the private thread for details.`,
     ephemeral: true,
   });
 }
 
-async function handleCancelLeague(interaction, leagueId) {
-  const db = readDB();
+// ── Cancel League ─────────────────────────────────────────────────────────────
+
+async function handleCancel(interaction, leagueId) {
+  const db     = readDB();
   const league = db.leagues[leagueId];
 
-  if (!league) {
-    return interaction.reply({ content: `No league found with ID \`${leagueId}\`.`, ephemeral: true });
-  }
-  if (league.status === 'cancelled') {
-    return interaction.reply({ content: `League \`${leagueId}\` is already cancelled.`, ephemeral: true });
-  }
+  if (!league)                       return interaction.reply({ content: `No league found with ID **${leagueId}**.`,          ephemeral: true });
+  if (league.status === 'cancelled') return interaction.reply({ content: `League **${leagueId}** is already cancelled.`,     ephemeral: true });
 
   league.status = 'cancelled';
   writeDB(db);
 
   try {
-    const leagueChannel = await client.channels.fetch(LEAGUE_CHANNEL_ID);
-    const msg = await leagueChannel.messages.fetch(league.messageId);
+    const ch  = await client.channels.fetch(LEAGUE_CHANNEL_ID);
+    const msg = await ch.messages.fetch(league.messageId);
     await msg.edit({ embeds: [buildLeagueEmbed(league)], components: [] });
   } catch (e) {
-    console.error('Cancel embed update error:', e);
+    console.error('Embed cancel error:', e);
   }
 
   try {
-    const thread = await client.channels.fetch(league.threadId);
+    const thread = await client.channels.fetch(league.threadId).catch(() => null);
     if (thread) {
-      await thread.send(
-        `League \`${leagueId}\` has been cancelled by <@${interaction.user.id}>. This thread will now be archived.`
-      );
+      await thread.send(`League **${leagueId}** has been cancelled by <@${interaction.user.id}>. This thread will now be archived.`);
       await thread.setArchived(true);
     }
   } catch (e) {
     console.error('Thread archive error:', e);
   }
 
-  await interaction.reply({
-    content: `League \`${leagueId}\` has been cancelled successfully.`,
-    ephemeral: true,
-  });
+  await interaction.reply({ content: `League **${leagueId}** has been cancelled.`, ephemeral: true });
 }
+
+// ── Create League ─────────────────────────────────────────────────────────────
 
 async function createLeague(interaction, session) {
   const db = readDB();
-  const leagueId = String(db.nextId++);
+
+  // Generate unique ID
+  let leagueId;
+  do { leagueId = generateId(); } while (db.leagues[leagueId]);
+
   const max = maxPlayers(session.format);
 
   const league = {
-    id: leagueId,
-    format: session.format,
-    type: session.type,
-    perks: session.perks,
-    region: session.region,
-    hostId: interaction.user.id,
-    hostTag: interaction.user.username,
+    id:         leagueId,
+    format:     session.format,
+    type:       session.type,
+    perks:      session.perks,
+    region:     session.region,
+    hostId:     interaction.user.id,
+    hostName:   interaction.user.username,
     maxPlayers: max,
-    players: [interaction.user.id],
-    messageId: null,
-    threadId: null,
-    status: 'open',
+    players:    [interaction.user.id],
+    messageId:  null,
+    pingMsgId:  null,
+    threadId:   null,
+    status:     'open',
   };
 
-  const leagueChannel = await client.channels.fetch(LEAGUE_CHANNEL_ID);
+  const ch = await client.channels.fetch(LEAGUE_CHANNEL_ID);
 
-  const thread = await leagueChannel.threads.create({
-    name: `League ${leagueId} - ${session.format} ${session.type}`,
-    type: ChannelType.PrivateThread,
+  // Create private thread
+  const thread = await ch.threads.create({
+    name:      `League ${leagueId}`,
+    type:      ChannelType.PrivateThread,
     invitable: false,
-    reason: `League ${leagueId} opened by ${interaction.user.username}`,
+    reason:    `League ${leagueId} by ${interaction.user.username}`,
   });
 
   await thread.members.add(interaction.user.id);
@@ -261,33 +273,41 @@ async function createLeague(interaction, session) {
 
   league.threadId = thread.id;
 
-  const embed = buildLeagueEmbed(league);
-
-  const msg = await leagueChannel.send({
-    content: `<@&${LEAGUES_PING_ROLE_ID}>`,
-    embeds: [embed],
+  // Post league embed
+  const msg = await ch.send({
+    embeds:     [buildLeagueEmbed(league)],
     components: [buildJoinButton(leagueId)],
   });
 
   league.messageId = msg.id;
+
+  // Post separate ping message
+  const pingMsg = await ch.send(`<@&${LEAGUES_PING_ROLE}> New league available: **${leagueId}**`);
+  league.pingMsgId = pingMsg.id;
+
   db.leagues[leagueId] = league;
   writeDB(db);
 
   delete pendingSessions[interaction.user.id];
 
   await interaction.followUp({
-    content: `League \`${leagueId}\` has been created. View it in <#${LEAGUE_CHANNEL_ID}>.`,
+    content: `League **${leagueId}** has been created in <#${LEAGUE_CHANNEL_ID}>.`,
     ephemeral: true,
   });
 }
 
+// ── Interaction Handler ───────────────────────────────────────────────────────
+
 client.on('interactionCreate', async interaction => {
   try {
-    if (interaction.isChatInputCommand()) {
-      const { commandName } = interaction;
 
-      if (commandName === 'host-league') {
-        if (!interaction.member.roles.cache.has(LEAGUE_HOST_ROLE_ID)) {
+    // ── Slash Commands ────────────────────────────────────────────────────────
+    if (interaction.isChatInputCommand() && interaction.commandName === 'league') {
+      const sub = interaction.options.getSubcommand();
+
+      // /league host
+      if (sub === 'host') {
+        if (!interaction.member.roles.cache.has(LEAGUE_HOST_ROLE)) {
           return interaction.reply({ content: 'You do not have permission to host leagues.', ephemeral: true });
         }
         if (interaction.channelId !== LEAGUE_CHANNEL_ID) {
@@ -310,32 +330,33 @@ client.on('interactionCreate', async interaction => {
             ])
         );
 
-        await interaction.reply({
+        return interaction.reply({
           content: '**Host a League**\n\n**Step 1 of 4 - Match Format**\nSelect the format for your league:',
           components: [row],
           ephemeral: true,
         });
       }
 
-      else if (commandName === 'join-league') {
-        const leagueId = interaction.options.getString('id');
-        await handleJoinLeague(interaction, leagueId);
+      // /league join <id>
+      if (sub === 'join') {
+        return handleJoin(interaction, interaction.options.getString('id').toUpperCase());
       }
 
-      else if (commandName === 'cancel-league') {
-        if (!interaction.member.roles.cache.has(LEAGUE_HOST_ROLE_ID)) {
+      // /league cancel <id>
+      if (sub === 'cancel') {
+        if (!interaction.member.roles.cache.has(LEAGUE_HOST_ROLE)) {
           return interaction.reply({ content: 'You do not have permission to cancel leagues.', ephemeral: true });
         }
-        const leagueId = interaction.options.getString('id');
-        await handleCancelLeague(interaction, leagueId);
+        return handleCancel(interaction, interaction.options.getString('id').toUpperCase());
       }
     }
 
+    // ── Select Menus (host flow) ──────────────────────────────────────────────
     else if (interaction.isStringSelectMenu()) {
       const session = pendingSessions[interaction.user.id];
       if (!session) {
         return interaction.update({
-          content: 'Your session has expired. Please run `/host-league` again.',
+          content: 'Your session has expired. Please run `/league host` again.',
           components: [],
         });
       }
@@ -353,7 +374,7 @@ client.on('interactionCreate', async interaction => {
             ])
         );
 
-        await interaction.update({
+        return interaction.update({
           content:
             `**Host a League**\n\nFormat: **${session.format}**\n\n` +
             `**Step 2 of 4 - Match Type**\nSelect the match type:`,
@@ -361,7 +382,7 @@ client.on('interactionCreate', async interaction => {
         });
       }
 
-      else if (interaction.customId === 'select_type') {
+      if (interaction.customId === 'select_type') {
         session.type = interaction.values[0];
 
         const row = new ActionRowBuilder().addComponents(
@@ -374,7 +395,7 @@ client.on('interactionCreate', async interaction => {
             ])
         );
 
-        await interaction.update({
+        return interaction.update({
           content:
             `**Host a League**\n\nFormat: **${session.format}** | Type: **${session.type}**\n\n` +
             `**Step 3 of 4 - Match Perks**\nSelect the perks setting:`,
@@ -382,7 +403,7 @@ client.on('interactionCreate', async interaction => {
         });
       }
 
-      else if (interaction.customId === 'select_perks') {
+      if (interaction.customId === 'select_perks') {
         session.perks = interaction.values[0];
 
         const row = new ActionRowBuilder().addComponents(
@@ -398,7 +419,7 @@ client.on('interactionCreate', async interaction => {
             ])
         );
 
-        await interaction.update({
+        return interaction.update({
           content:
             `**Host a League**\n\nFormat: **${session.format}** | Type: **${session.type}** | Perks: **${session.perks}**\n\n` +
             `**Step 4 of 4 - Region**\nSelect the region:`,
@@ -406,7 +427,7 @@ client.on('interactionCreate', async interaction => {
         });
       }
 
-      else if (interaction.customId === 'select_region') {
+      if (interaction.customId === 'select_region') {
         session.region = interaction.values[0];
 
         await interaction.update({
@@ -416,26 +437,23 @@ client.on('interactionCreate', async interaction => {
           components: [],
         });
 
-        await createLeague(interaction, session);
+        return createLeague(interaction, session);
       }
     }
 
+    // ── Buttons ───────────────────────────────────────────────────────────────
     else if (interaction.isButton()) {
       if (interaction.customId.startsWith('join_')) {
-        const leagueId = interaction.customId.slice(5);
-        await handleJoinLeague(interaction, leagueId);
+        return handleJoin(interaction, interaction.customId.slice(5));
       }
     }
 
   } catch (err) {
     console.error('Interaction error:', err);
     try {
-      const reply = { content: 'An error occurred while processing your request.', ephemeral: true };
-      if (interaction.deferred || interaction.replied) {
-        await interaction.followUp(reply);
-      } else {
-        await interaction.reply(reply);
-      }
+      const msg = { content: 'An error occurred. Please try again.', ephemeral: true };
+      if (interaction.deferred || interaction.replied) await interaction.followUp(msg);
+      else await interaction.reply(msg);
     } catch (_) {}
   }
 });
