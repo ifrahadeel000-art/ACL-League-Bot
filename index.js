@@ -25,7 +25,7 @@ if (!TOKEN || !CLIENT_ID) {
 
 const DB_PATH           = './database.json';
 const LEAGUE_CHANNEL_ID = '1501829215291703378';
-const LEAGUES_PING_ROLE = '1501829213928554565';
+const LEAGUES_PING_ROLE = '1515427023458402424';
 const LEAGUE_HOST_ROLE  = '1501829213966176269';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
